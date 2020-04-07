@@ -11,6 +11,7 @@ type MemorySource struct {
 	name                string
 	identifierNamespace string
 	schemaNamespace     string
+	viewURL             string
 
 	// maps from Entity ID to Entity for all known entities.
 	entities map[string]*Entity
@@ -160,4 +161,9 @@ func (s *MemorySource) QueryPrefix(text string, limit int) []*Entity {
 		return result[i].Name > result[j].Name
 	})
 	return result
+}
+
+// ViewURL returns the template for a View URL.
+func (s *MemorySource) ViewURL() string {
+	return s.viewURL
 }

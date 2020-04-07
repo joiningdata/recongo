@@ -56,7 +56,7 @@ func (u URLTemplate) MarshalJSON() ([]byte, error) {
 type Extend struct {
 
 	// Definition of the settings configurable by the user when fetching a property
-	PropertySettings []interface{} `json:"property_settings,omitempty"`
+	PropertySettings []*PropertySetting `json:"property_settings,omitempty"`
 
 	// Location of the endpoint to propose properties to fetch for a given type
 	ProposeProperties *ServiceDefinition `json:"propose_properties,omitempty"`
@@ -130,4 +130,37 @@ type Suggest struct {
 type View struct {
 	// URL template to transform an entity identifier into the corresponding URI
 	URL URLTemplate `json:"url"`
+}
+
+type PropertySetting struct {
+	// Name of the setting, which identifies the setting uniquely.
+	Name string `json:"name`
+
+	// Label is used when presenting the setting to the user in a form.
+	Label string `json:"label"`
+
+	// HelpText describes the meaning of the field to the user. This is
+	// meant to be a short string that can be displayed alongside the
+	// corresponding form field.
+	HelpText string `json:"help_text"`
+
+	// Default value for the setting, when not provided by the user.
+	Default string `json:"default"`
+
+	// Type determines which type of value the property setting is
+	// expected to store:  one of the strings "number", "text",
+	// "checkbox", or "select". Clients SHOULD render this setting
+	// with the corresponding HTML element.
+	Type string `json:"type"`
+
+	// Choices is a list of property setting choices when Type is select.
+	Choices []*PropertyChoice `json:"choices,omitempty"`
+}
+
+// PropertyChoice is a selectable choice for a property in a select.
+type PropertyChoice struct {
+	// Name of the property value displayed to the user.
+	Name string `json:"name"`
+	// Value of the property as stored in the data.
+	Value string `json:"value"`
 }

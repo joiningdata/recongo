@@ -1,0 +1,30 @@
+{
+  "name": "NCBI Entrez Gene",
+  "view_url": "https://ncbi.nlm.nih.gov/gene/%s",
+  "identifier_namespace": "ncbi.nlm.nih.gov",
+  "schema_namespace": "ncbi.nlm.nih.gov",
+  "files": [
+    {
+      "id": "gene",
+      "name": "Entrez Gene",
+      "description": "NCBI Entrez Gene catalog",
+      "filename": "gene_info.gz",
+      "column2property": {
+          "0":"tax_id",
+          "1":"id",
+          "2":"name",
+          "4":"synonyms",
+          "5":"dbxrefs",
+          "6":"chromosome",
+          "7":"map_location",
+          "8":"description",
+          "9":"gene_type",
+          "10":"official_symbol",
+          "11":"official_name",
+          "12":"nomenclature_status",
+          "14":"last_modification",
+          "15":"feature_type"
+        }
+    }
+  ]
+}

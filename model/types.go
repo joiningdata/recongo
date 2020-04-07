@@ -17,8 +17,11 @@ type Entity struct {
 	// Description is a human-readable description of the entity.
 	Description string `json:"description,omitempty"`
 
+	// Properties is all the other properties of the Entity.
+	Properties map[string]interface{} `json:"-"`
+
 	// Types is a (possibly empty) list of entity types for this entity.
-	Types []*Type `json:"type"`
+	Types []*Type `json:"type,omitempty"`
 }
 
 // Type represents a category of entities.
@@ -31,6 +34,9 @@ type Type struct {
 
 	// Description is a human-readable description of the type.
 	Description string `json:"description,omitempty"`
+
+	// ViewURL describes how to turn an Entity ID into a permalink.
+	ViewURL string `json:"url"`
 }
 
 // Property represents a type of attribute that entities can have

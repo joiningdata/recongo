@@ -11,6 +11,9 @@ type Source interface {
 	// SchemaNS is a universal namespace for concept Type identifiers.
 	SchemaNS() string
 
+	// ViewURL returns the template for a View URL.
+	ViewURL() string
+
 	// Types returns all supported Entity types.
 	Types() []*Type
 
@@ -35,7 +38,7 @@ type QueryRequest struct {
 	// Text is the search text to query for.
 	Text string `json:"query"`
 
-	// Types lists the Type IDs to query over.
+	// Type is the Type ID to query over (if present).
 	Type string `json:"type"`
 
 	// Limit the results to the first N results.
@@ -52,8 +55,9 @@ type QueryRequest struct {
 type QueryProperty struct {
 	// ID is the property ID.
 	ID string `json:"pid"`
-	// Values is the list of values to search for in the Property.
-	Values []string `json:"v"`
+
+	// Value is the text to search for in the Property.
+	Value string `json:"v"`
 }
 
 // QueryResponse describes a Reconciliation Query reponse.

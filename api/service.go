@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/joiningdata/recongo/model"
@@ -62,6 +63,62 @@ func (s *Service) suggestType(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	handleJSONP(w, r, map[string]interface{}{"result": results})
+}
+
+func (s *Service) suggestProps(w http.ResponseWriter, r *http.Request) {
+	prefix := r.URL.Query().Get("prefix")
+	low := strings.ToLower(prefix)
+	hits := make(map[string]*model.Property)
+
+	types := s.source.Types()
+	for _, t := range types {
+		props := s.source.Properties(t.ID)
+		for _, p := range props {
+			if _, ok := hits[p.ID]; ok {
+				continue
+			}
+			if strings.HasPrefix(strings.ToLower(p.Name), low) {
+				hits[p.ID] = p
+			}
+		}
+	}
+	if len(hits) == 0 {
+		for _, t := range types {
+			props := s.source.Properties(t.ID)
+			for _, p := range props {
+				if _, ok := hits[p.ID]; ok {
+					continue
+				}
+				if strings.Contains(strings.ToLower(p.Name), low) {
+					hits[p.ID] = p
+				}
+			}
+		}
+	}
+	results := make([]*model.Property, 0, len(hits))
+	for _, p := range hits {
+		results = append(results, p)
+	}
+	handleJSONP(w, r, map[string]interface{}{"result": results})
+}
+
+func (s *Service) listProperties(w http.ResponseWriter, r *http.Request) {
+	resp := struct {
+		Limit      int               `json:"limit"`
+		Type       string            `json:"type"`
+		Properties []*model.Property `json:"properties"`
+	}{}
+	resp.Type = r.URL.Query().Get("type")
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		x, err := strconv.ParseInt(limitStr, 10, 64)
+		if err == nil {
+			resp.Limit = int(x)
+		}
+	}
+
+	resp.Properties = s.source.Properties(resp.Type)
+
+	handleJSONP(w, r, resp)
 }
 
 func (s *Service) reconHandler(w http.ResponseWriter, r *http.Request) {
@@ -127,21 +184,31 @@ func NewService(urlRoot, prefix string, src model.Source) *Service {
 		Suggest: &Suggest{
 			Entity: &ServiceDefinition{
 				ServiceURL:  urlRoot + prefix,
-				ServicePath: "/entities",
+				ServicePath: "/auto/entities",
 			},
 			Type: &ServiceDefinition{
 				ServiceURL:  urlRoot + prefix,
-				ServicePath: "/types",
+				ServicePath: "/auto/types",
 			},
-			// TODO also suggest properties
+			Property: &ServiceDefinition{
+				ServiceURL:  urlRoot + prefix,
+				ServicePath: "/auto/properties",
+			},
 		},
 
-		/*
-			// TODO: implement these
-			Extend *Extend `json:"extend,omitempty"`
-			Preview *Preview `json:"preview,omitempty"`
-			View *View `json:"view,omitempty"`
-		*/
+		Extend: &Extend{
+			ProposeProperties: &ServiceDefinition{
+				ServiceURL:  urlRoot + prefix,
+				ServicePath: "/properties",
+			},
+			//PropertySettings: []*PropertySetting{},
+		},
+	}
+
+	if vu := src.ViewURL(); vu != "" {
+		m.View = &View{
+			URL: URLTemplate(vu),
+		}
 	}
 
 	s := &Service{
@@ -150,7 +217,9 @@ func NewService(urlRoot, prefix string, src model.Source) *Service {
 		source:   src,
 	}
 	s.HandleFunc(prefix, s.reconHandler)
-	s.HandleFunc(prefix+"/entities", s.suggestEntity)
-	s.HandleFunc(prefix+"/types", s.suggestType)
+	s.HandleFunc(prefix+"/auto/entities", s.suggestEntity)
+	s.HandleFunc(prefix+"/auto/types", s.suggestType)
+	s.HandleFunc(prefix+"/auto/properties", s.suggestProps)
+	s.HandleFunc(prefix+"/properties", s.listProperties)
 	return s
 }
