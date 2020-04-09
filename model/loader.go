@@ -29,6 +29,9 @@ import (
 //    3: JSON object of properties {description: "", ...}
 //
 func Load(filename string) (Source, error) {
+	if strings.Contains(filename, "sqlite") {
+		return dbOpen("sqlite3", filename)
+	}
 	f, err := os.Open(filename)
 	if err != nil {
 		return nil, err

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"compress/gzip"
+	"database/sql"
 	"encoding/csv"
 	"encoding/json"
 	"flag"
@@ -13,6 +14,9 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	// sqlite database drivers
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type inputConfig struct {
@@ -101,7 +105,7 @@ func getReader(fn string) (*csv.Reader, error) {
 var seps = regexp.MustCompile("[_. -]+")
 
 func main() {
-	outname := flag.String("o", "-", "output to `filename.txt`")
+	outname := flag.String("o", "-", "output to `filename(.txt|.sqlite)`")
 	dryRun := flag.Bool("p", false, "`pretend` to do the parsing (aka dry run)")
 	flag.Parse()
 
@@ -216,6 +220,14 @@ func main() {
 
 	///// everything now being sent to output
 
+	if strings.Contains(*outname, "sqlite") {
+		err := outputToSqlite(*outname, typeSet, cfgset, propSet, s)
+		if err != nil {
+			log.Println(err)
+		}
+		return
+	}
+
 	var dest io.WriteCloser = os.Stdout
 	if *outname != "-" {
 		f, err := os.Create(*outname)
@@ -254,4 +266,175 @@ func outputToFlatfile(dest io.WriteCloser, typeSet []map[string]string, cfgset *
 		fmt.Fprintln(dest, s.Text())
 	}
 	return dest.Close()
+}
+
+func outputToSqlite(filename string, typeSet []map[string]string, cfgset *inputConfig,
+	propSet map[string]map[string]struct{}, s *bufio.Scanner) error {
+	db, err := sql.Open("sqlite3", filename)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	for _, ddl := range schema {
+		_, err = db.Exec(ddl)
+		if err != nil {
+			return err
+		}
+	}
+	////
+	// add in the global metadata
+	_, err = db.Exec("INSERT INTO recongo_metadata (meta_key, meta_value) VALUES (?,?);",
+		"name", cfgset.Name)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec("INSERT INTO recongo_metadata (meta_key, meta_value) VALUES (?,?);",
+		"identifierNamespace", cfgset.IdentifierNamespace)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec("INSERT INTO recongo_metadata (meta_key, meta_value) VALUES (?,?);",
+		"schemaNamespace", cfgset.SchemaNamespace)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec("INSERT INTO recongo_metadata (meta_key, meta_value) VALUES (?,?);",
+		"view_url", cfgset.ViewURL)
+	if err != nil {
+		return err
+	}
+
+	for _, t := range typeSet {
+		_, err = db.Exec("INSERT INTO recongo_types (type_id,type_name,type_description,type_url) VALUES (?,?,?,?);",
+			t["id"], t["name"], t["description"], t["url"])
+		if err != nil {
+			return err
+		}
+	}
+
+	for propID, etypes := range propSet {
+		fancyName := strings.Title(strings.TrimSpace(seps.ReplaceAllString(propID, " ")))
+		_, err = db.Exec("INSERT INTO recongo_properties (prop_id,prop_name) VALUES (?,?);",
+			propID, fancyName)
+		if err != nil {
+			return err
+		}
+
+		for typeID := range etypes {
+			_, err = db.Exec("INSERT INTO recongo_props2types (prop_id,type_id) VALUES (?,?);",
+				propID, typeID)
+			if err != nil {
+				return err
+			}
+
+		}
+	}
+
+	////
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(`INSERT INTO recongo_entities (ent_id, ent_name, ent_types, ent_description)
+	VALUES (?,?,?,?);`)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	stmt2, err := tx.Prepare(`INSERT INTO recongo_entity_properties (ent_id, prop_id, prop_value)
+		VALUES (?,?,?);`)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	fmt.Fprint(os.Stderr, "Saving to database...\n")
+	nrec := 0
+	x := make(map[string]string, 20)
+	for s.Scan() {
+		nrec++
+		fmt.Fprintf(os.Stderr, "  %10d\r", nrec)
+		os.Stderr.Sync()
+
+		rec := strings.Split(s.Text(), "\t")
+		desc := ""
+		if rec[3] != "{}" {
+			json.Unmarshal([]byte(rec[3]), &x)
+			if d, ok := x["description"]; ok {
+				desc = d
+				delete(x, "description")
+			}
+			if len(x) > 0 {
+				for propID, propVal := range x {
+					_, err = stmt2.Exec(rec[0], propID, propVal)
+					if err != nil {
+						stmt.Close()
+						stmt2.Close()
+						tx.Rollback()
+						return err
+					}
+					delete(x, propID)
+				}
+				// recongo_entity_properties
+			}
+		}
+		_, err = stmt.Exec(rec[0], rec[1], rec[2], desc)
+		if err != nil {
+			stmt.Close()
+			stmt2.Close()
+			tx.Rollback()
+			return err
+		}
+	}
+	stmt.Close()
+	stmt2.Close()
+	_, err = tx.Exec("INSERT INTO recongo_entities_fts(recongo_entities_fts) VALUES ('rebuild');")
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+var schema = []string{
+	`CREATE TABLE recongo_metadata (
+		meta_key varchar primary key,
+		meta_value varchar
+	);`,
+
+	`CREATE TABLE recongo_types (
+		type_id varchar primary key,
+		type_name varchar,
+		type_description varchar,
+		type_url varchar
+	);`,
+
+	`CREATE TABLE recongo_properties (
+		prop_id varchar primary key,
+		prop_name varchar,
+		prop_description varchar
+	);`,
+
+	`CREATE TABLE recongo_props2types (
+		prop_id varchar references recongo_properties (prop_id),
+		type_id vachar references recongo_types (type_id),
+		primary key (prop_id, type_id)
+	);`,
+
+	`CREATE TABLE recongo_entities (
+		ent_id varchar primary key,
+		ent_name varchar,
+		ent_description varchar,
+		ent_types varchar -- comma-separated list of type_ids
+	);`,
+
+	`CREATE TABLE recongo_entity_properties (
+		ent_id varchar,
+		prop_id varchar,
+		prop_value varchar,
+		primary key (ent_id,prop_id,prop_value)
+	)`,
+
+	`CREATE VIRTUAL TABLE recongo_entities_fts USING fts5
+		(ent_id, ent_name, ent_description, ent_types, content=recongo_entities);`,
 }
