@@ -98,9 +98,10 @@ func getReader(fn string) (*csv.Reader, error) {
 	return r, nil
 }
 
-func main() {
-	seps := regexp.MustCompile("[_. -]+")
+var seps = regexp.MustCompile("[_. -]+")
 
+func main() {
+	outname := flag.String("o", "-", "output to `filename.txt`")
 	dryRun := flag.Bool("p", false, "`pretend` to do the parsing (aka dry run)")
 	flag.Parse()
 
@@ -163,8 +164,14 @@ func main() {
 			continue
 		}
 
+		nrec := 0
+		fmt.Fprint(os.Stderr, "Reading data...\n")
 		rec, err := r.Read()
 		for err == nil {
+			nrec++
+			fmt.Fprintf(os.Stderr, "  %10d\r", nrec)
+			os.Stderr.Sync()
+
 			props := make(map[string]string)
 			for i, propName := range fc.Properties {
 				switch propName {
@@ -197,17 +204,41 @@ func main() {
 
 			rec, err = r.Read()
 		}
+		fmt.Fprint(os.Stderr, "\n  Done.\n")
+
 		if err != nil {
 			log.Println(err)
 		}
 	}
 
 	fout.Seek(0, io.SeekStart)
+	s := bufio.NewScanner(fout)
+
+	///// everything now being sent to output
+
+	var dest io.WriteCloser = os.Stdout
+	if *outname != "-" {
+		f, err := os.Create(*outname)
+		if err != nil {
+			log.Fatal(err)
+		}
+		dest = f
+	}
+
+	err = outputToFlatfile(dest, typeSet, cfgset, propSet, s)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func outputToFlatfile(dest io.WriteCloser, typeSet []map[string]string, cfgset *inputConfig,
+	propSet map[string]map[string]struct{}, s *bufio.Scanner) error {
 
 	typesjson, _ := json.Marshal(typeSet)
-	fmt.Printf("%s\t%s\t%s\t%s\n", cfgset.IdentifierNamespace, cfgset.Name,
+	fmt.Fprintf(dest, "%s\t%s\t%s\t%s\n", cfgset.IdentifierNamespace, cfgset.Name,
 		cfgset.SchemaNamespace, string(typesjson))
 
+	var out [4]string
 	out[3] = "{}"
 
 	for propName, ents := range propSet {
@@ -215,12 +246,12 @@ func main() {
 		out[1] = strings.Title(strings.TrimSpace(seps.ReplaceAllString(propName, " ")))
 		for etype := range ents {
 			out[2] = "property," + etype
-			fmt.Println(strings.Join(out[:], "\t"))
+			fmt.Fprintln(dest, strings.Join(out[:], "\t"))
 		}
 	}
 
-	s := bufio.NewScanner(fout)
 	for s.Scan() {
-		fmt.Println(s.Text())
+		fmt.Fprintln(dest, s.Text())
 	}
+	return dest.Close()
 }

@@ -132,9 +132,10 @@ type View struct {
 	URL URLTemplate `json:"url"`
 }
 
+// PropertySetting defines a configurable setting for a requested property.
 type PropertySetting struct {
 	// Name of the setting, which identifies the setting uniquely.
-	Name string `json:"name`
+	Name string `json:"name"`
 
 	// Label is used when presenting the setting to the user in a form.
 	Label string `json:"label"`
@@ -163,4 +164,22 @@ type PropertyChoice struct {
 	Name string `json:"name"`
 	// Value of the property as stored in the data.
 	Value string `json:"value"`
+}
+
+// ExtendRequest defines a property request for a set of Entity IDs.
+type ExtendRequest struct {
+	// IDs is the list of Entity IDs to extend with property values.
+	IDs []string `json:"ids"`
+
+	// Properties defines the list of requested properties.
+	Properties []*ExtendProperty `json:"properties"`
+}
+
+// ExtendProperty defines a property requested in an ExtendRequest.
+type ExtendProperty struct {
+	// ID of the property requested.
+	ID string `json:"id"`
+
+	// Settings that apply to the property value request.
+	Settings map[string]interface{} `json:"settings,omitempty"`
 }

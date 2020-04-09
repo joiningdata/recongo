@@ -3,7 +3,9 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -56,6 +58,7 @@ func (s *Service) suggestType(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(results) == 0 {
+		// if there are 0 actual-prefix hits, try harder to be nice
 		for _, t := range types {
 			if strings.Contains(strings.ToLower(t.Name), low) {
 				results = append(results, t)
@@ -83,6 +86,7 @@ func (s *Service) suggestProps(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(hits) == 0 {
+		// if there are 0 actual-prefix hits, try harder to be nice
 		for _, t := range types {
 			props := s.source.Properties(t.ID)
 			for _, p := range props {
@@ -102,6 +106,7 @@ func (s *Service) suggestProps(w http.ResponseWriter, r *http.Request) {
 	handleJSONP(w, r, map[string]interface{}{"result": results})
 }
 
+// lists properties of a specific Entity Type
 func (s *Service) listProperties(w http.ResponseWriter, r *http.Request) {
 	resp := struct {
 		Limit      int               `json:"limit"`
@@ -117,41 +122,98 @@ func (s *Service) listProperties(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp.Properties = s.source.Properties(resp.Type)
-
+	if resp.Limit > 0 && len(resp.Properties) > resp.Limit {
+		resp.Properties = resp.Properties[:resp.Limit]
+	}
 	handleJSONP(w, r, resp)
 }
 
 func (s *Service) reconHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet && r.URL.Query().Get("queries") == "" {
-		// no queries over GET, send the manifest instead
-		handleJSONP(w, r, s.manifest)
+	// query can be sent over GET or POST
+	var src url.Values
+	if r.Method == http.MethodGet {
+		src = r.URL.Query()
+	} else if r.Method == http.MethodPost {
+		err := r.ParseForm()
+		if err != nil {
+			log.Println(err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		src = r.Form
+	}
+
+	qbytes := src.Get("queries")
+	if len(qbytes) > 0 {
+		var queries map[string]*model.QueryRequest
+
+		err := json.Unmarshal([]byte(qbytes), &queries)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		s.queryResult(queries, w, r)
 		return
 	}
 
-	// query can be sent over GET or POST
-	var queries map[string]*model.QueryRequest
-	if r.Method == http.MethodGet {
-		qbytes := []byte(r.URL.Query().Get("queries"))
-		err := json.Unmarshal(qbytes, &queries)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-	} else {
-		err := r.ParseForm()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
+	ebytes := src.Get("extend")
+	if len(ebytes) > 0 {
+		extend := &ExtendRequest{}
 
-		qbytes := []byte(r.Form.Get("queries"))
-		err = json.Unmarshal(qbytes, &queries)
+		err := json.Unmarshal([]byte(ebytes), extend)
 		if err != nil {
+			log.Println(err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		s.extendResult(extend, w, r)
+		return
 	}
 
+	// no 'queries' or 'extend' in GET or POST, send the manifest instead
+	handleJSONP(w, r, s.manifest)
+}
+
+func (s *Service) extendResult(extend *ExtendRequest, w http.ResponseWriter, r *http.Request) {
+	//  the response type for ExtendRequest.
+	var resp = struct {
+		// Meta describes the properties included in this response.
+		Meta []*model.Property `json:"meta"`
+
+		// Rows maps [Entity ID] to [Property ID] to list of value-maps
+		Rows map[string]map[string][]map[string]string `json:"rows"`
+	}{Rows: make(map[string]map[string][]map[string]string)}
+
+	propReq := make(map[string]*ExtendProperty)
+	for _, r := range extend.Properties {
+		propReq[r.ID] = r
+	}
+
+	for _, entityID := range extend.IDs {
+		e, ok := s.source.GetEntity(entityID)
+		if !ok {
+			http.Error(w, "entity not found: "+entityID, http.StatusNotFound)
+			return
+		}
+
+		rowprops := make(map[string][]map[string]string)
+		for pid, val := range e.Properties {
+			if pr, ok := propReq[pid]; ok {
+				if len(pr.Settings) > 0 {
+					// TODO: handle these
+				}
+				valmap := map[string]string{"str": fmt.Sprint(val)}
+				rowprops[pid] = append(rowprops[pid], valmap)
+			}
+		}
+		resp.Rows[entityID] = rowprops
+	}
+
+	handleJSONP(w, r, resp)
+}
+
+func (s *Service) queryResult(queries map[string]*model.QueryRequest, w http.ResponseWriter, r *http.Request) {
 	// collect results for each query
 	type ResultSet struct {
 		R []*model.Candidate `json:"result"`
@@ -161,6 +223,7 @@ func (s *Service) reconHandler(w http.ResponseWriter, r *http.Request) {
 		q.ID = qid
 		resp, err := s.source.Query(q)
 		if err != nil {
+			log.Println(err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
