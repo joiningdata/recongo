@@ -74,18 +74,42 @@ func (s *DatabaseSource) Properties(typeID string) []*Property {
 }
 
 // GetEntity returns the Entity matching the provided ID.
-func (s *DatabaseSource) GetEntity(entityID string) (*Entity, bool) {
-	e := &Entity{}
-	eTypes := ""
-	rows, err := s.doQuery("entity_by_id", entityID)
-	if err == nil {
-		if rows.Next() {
-			err = rows.Scan(&e.ID, &e.Name, &e.Description, &eTypes)
-		} else {
-			err = sql.ErrNoRows
+func (s *DatabaseSource) GetEntity(entityID EntityID) (*Entity, bool) {
+	// FIXME: use Type in the query too
+	ents, _ := s.getExactIDMatches(entityID.ID())
+	for _, e := range ents {
+		for _, t := range e.Types {
+			if t.ID == entityID.Type() {
+				e.Properties, _ = s.getEntityProps(entityID)
+				return e, true
+			}
 		}
-		rows.Close()
 	}
+	return nil, false
+}
+
+func (s *DatabaseSource) getEntityProps(eid EntityID) (map[string]interface{}, error) {
+	rows, err := s.doQuery("entity_property_values", eid.Type(), eid.ID())
+	if err != nil {
+		return nil, err
+	}
+
+	res := make(map[string]interface{})
+	for rows.Next() {
+		var propName, propValue string
+		err = rows.Scan(&propName, &propValue)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		res[propName] = propValue
+	}
+	return res, rows.Close()
+}
+
+func (s *DatabaseSource) getExactIDMatches(id string) ([]*Entity, bool) {
+	eTypes := ""
+	rows, err := s.doQuery("entity_by_id", id)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, false
@@ -93,10 +117,22 @@ func (s *DatabaseSource) GetEntity(entityID string) (*Entity, bool) {
 		log.Println(err)
 		return nil, false
 	}
-	for _, tid := range strings.Split(eTypes, ",") {
-		e.Types = append(e.Types, s.types[tid])
+
+	var res []*Entity
+	for rows.Next() {
+		e := &Entity{}
+		err = rows.Scan(&e.ID, &e.Name, &e.Description, &eTypes)
+		for i, tid := range strings.Split(eTypes, ",") {
+			if i == 0 {
+				e.ID = EntityID(tid + ":" + string(e.ID))
+			}
+			e.Types = append(e.Types, s.types[tid])
+		}
+		res = append(res, e)
 	}
-	return e, true
+	rows.Close()
+
+	return res, len(res) > 0
 }
 
 // Query entitities for a match.
@@ -111,16 +147,17 @@ func (s *DatabaseSource) Query(q *QueryRequest) (*QueryResponse, error) {
 	log.Println(q)
 
 	// fast-track exact ID matches
-	if e, ok := s.GetEntity(q.Text); ok {
-		log.Println("one-shot:", e)
-
-		res.Results = append(res.Results, &Candidate{
-			ID:    e.ID,
-			Name:  e.Name,
-			Types: e.Types,
-			Score: 100.0,
-			Match: true,
-		})
+	if ents, ok := s.getExactIDMatches(q.Text); ok {
+		log.Println("one-shot:", ents)
+		for _, e := range ents {
+			res.Results = append(res.Results, &Candidate{
+				ID:    e.ID,
+				Name:  e.Name,
+				Types: e.Types,
+				Score: 100.0,
+				Match: true,
+			})
+		}
 		return res, nil
 	}
 
@@ -147,8 +184,18 @@ func (s *DatabaseSource) Query(q *QueryRequest) (*QueryResponse, error) {
 			rows.Close()
 			return nil, err
 		}
-		for _, tid := range strings.Split(cTypes, ",") {
+		hitType := (q.Type == "")
+		for i, tid := range strings.Split(cTypes, ",") {
+			if i == 0 {
+				c.ID = EntityID(tid + ":" + string(c.ID))
+			}
 			c.Types = append(c.Types, s.types[tid])
+			if tid == q.Type {
+				hitType = true
+			}
+		}
+		if !hitType {
+			continue
 		}
 		if scoreScale == 0.0 {
 			s1 := float64(len(q.Text)) / float64(len(c.ID))
@@ -175,9 +222,9 @@ func (s *DatabaseSource) Query(q *QueryRequest) (*QueryResponse, error) {
 func (s *DatabaseSource) QueryPrefix(text string, limit int) []*Entity {
 	log.Println("prefix: ", text, limit)
 	// fast-track exact ID matches
-	if e, ok := s.GetEntity(text); ok {
-		log.Println("prefix one-shot:", e)
-		return []*Entity{e}
+	if ents, ok := s.getExactIDMatches(text); ok {
+		log.Println("prefix one-shot:", ents)
+		return ents
 	}
 
 	var result []*Entity
@@ -199,7 +246,10 @@ func (s *DatabaseSource) QueryPrefix(text string, limit int) []*Entity {
 			return nil
 		}
 
-		for _, tid := range strings.Split(eTypes, ",") {
+		for i, tid := range strings.Split(eTypes, ",") {
+			if i == 0 {
+				e.ID = EntityID(tid + ":" + string(e.ID))
+			}
 			e.Types = append(e.Types, s.types[tid])
 		}
 		result = append(result, e)
@@ -247,18 +297,13 @@ var _queries = map[string]map[string]string{
 
 		// full-text search entities for a text query
 		"entity_search": `SELECT ent_id, ent_name, ent_types, bm25(recongo_entities_fts) as score
-			FROM recongo_entities_fts WHERE recongo_entities_fts MATCH ?1
+			FROM recongo_entities_fts WHERE recongo_entities_fts MATCH ?1||'*'
 			ORDER BY score`,
 		// entity_search_by_props adds additional joins for property filters
 
-		// find all entity ids that match a given property value
-		"entity_property_match": `SELECT ent_id FROM recongo_entity_properties
-			WHERE prop_id=?1 AND prop_value=?2 GROUP BY ent_id, prop_value
-			ORDER BY ent_id, prop_value`,
-
-		// list all values for a property id
-		"property_values": `SELECT prop_value FROM recongo_entity_properties
-			WHERE prop_id=?1 GROUP BY prop_value`,
+		// find all properties and values for a entity id
+		"entity_property_values": `SELECT prop_id, prop_value FROM recongo_entity_properties
+			WHERE ent_types=?1 AND ent_id=?2 ORDER BY prop_id, prop_value`,
 	},
 }
 
@@ -286,12 +331,21 @@ func (s *DatabaseSource) doQuery(qname string, args ...interface{}) (*sql.Rows, 
 				ta := string([]rune{'b' + rune(i)})
 				q1 += ", recongo_entity_properties " + ta + " "
 				q2 += "  AND a.ent_id=" + ta + ".ent_id AND " + ta + ".prop_id=? AND " + ta + ".prop_value=? "
-				newargs = append(newargs, pd.ID, pd.Value)
+				switch px := pd.Value.(type) {
+				case string:
+					newargs = append(newargs, pd.ID, px)
+				case map[string]interface{}:
+					eid := EntityID(px["id"].(string))
+					newargs = append(newargs, pd.ID, eid.ID())
+				default:
+					newargs = append(newargs, pd.ID, pd.Value)
+				}
 			}
 			query = q1 + q2 + q3
 			args = newargs
 		}
 	}
+	//log.Println(query, args)
 	return s.db.Query(query, args...)
 }
 

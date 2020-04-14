@@ -169,7 +169,7 @@ type PropertyChoice struct {
 // ExtendRequest defines a property request for a set of Entity IDs.
 type ExtendRequest struct {
 	// IDs is the list of Entity IDs to extend with property values.
-	IDs []string `json:"ids"`
+	IDs []model.EntityID `json:"ids"`
 
 	// Properties defines the list of requested properties.
 	Properties []*ExtendProperty `json:"properties"`

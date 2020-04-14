@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joiningdata/recongo/model"
 )
@@ -129,6 +130,10 @@ func (s *Service) listProperties(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) reconHandler(w http.ResponseWriter, r *http.Request) {
+	defer func(start time.Time) {
+		log.Printf("%s %s [%s]\n", r.Method, r.URL.String(), time.Now().Sub(start))
+	}(time.Now())
+
 	// query can be sent over GET or POST
 	var src url.Values
 	if r.Method == http.MethodGet {
@@ -182,8 +187,8 @@ func (s *Service) extendResult(extend *ExtendRequest, w http.ResponseWriter, r *
 		Meta []*model.Property `json:"meta"`
 
 		// Rows maps [Entity ID] to [Property ID] to list of value-maps
-		Rows map[string]map[string][]map[string]string `json:"rows"`
-	}{Rows: make(map[string]map[string][]map[string]string)}
+		Rows map[model.EntityID]map[string][]map[string]string `json:"rows"`
+	}{Rows: make(map[model.EntityID]map[string][]map[string]string)}
 
 	propReq := make(map[string]*ExtendProperty)
 	for _, r := range extend.Properties {
@@ -193,7 +198,7 @@ func (s *Service) extendResult(extend *ExtendRequest, w http.ResponseWriter, r *
 	for _, entityID := range extend.IDs {
 		e, ok := s.source.GetEntity(entityID)
 		if !ok {
-			http.Error(w, "entity not found: "+entityID, http.StatusNotFound)
+			http.Error(w, "entity not found: "+string(entityID), http.StatusNotFound)
 			return
 		}
 
@@ -208,8 +213,16 @@ func (s *Service) extendResult(extend *ExtendRequest, w http.ResponseWriter, r *
 			}
 		}
 		resp.Rows[entityID] = rowprops
-	}
 
+		if len(propReq) > len(resp.Meta) {
+			allProps := s.source.Properties(entityID.Type())
+			for _, p := range allProps {
+				if _, ok := propReq[p.ID]; ok {
+					resp.Meta = append(resp.Meta, p)
+				}
+			}
+		}
+	}
 	handleJSONP(w, r, resp)
 }
 
@@ -231,6 +244,21 @@ func (s *Service) queryResult(queries map[string]*model.QueryRequest, w http.Res
 	}
 
 	handleJSONP(w, r, results)
+}
+
+func (s *Service) viewEntity(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL.Path)
+
+	eid := model.EntityID(r.URL.Path[strings.LastIndexByte(r.URL.Path, '/')+1:])
+	types := s.source.Types()
+	var realURL URLTemplate
+	for _, t := range types {
+		if t.ID == eid.Type() {
+			realURL = URLTemplate(t.ViewURL)
+			break
+		}
+	}
+	http.Redirect(w, r, realURL.Apply(eid.ID()), http.StatusSeeOther)
 }
 
 // NewService returns a new service provider bound to the specified url and
@@ -270,7 +298,7 @@ func NewService(urlRoot, prefix string, src model.Source) *Service {
 
 	if vu := src.ViewURL(); vu != "" {
 		m.View = &View{
-			URL: URLTemplate(vu),
+			URL: URLTemplate(urlRoot + prefix + "/view/%s"),
 		}
 	}
 
@@ -284,5 +312,6 @@ func NewService(urlRoot, prefix string, src model.Source) *Service {
 	s.HandleFunc(prefix+"/auto/types", s.suggestType)
 	s.HandleFunc(prefix+"/auto/properties", s.suggestProps)
 	s.HandleFunc(prefix+"/properties", s.listProperties)
+	s.HandleFunc(prefix+"/view/", s.viewEntity)
 	return s
 }

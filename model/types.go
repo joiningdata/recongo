@@ -6,10 +6,31 @@ import (
 	"strings"
 )
 
+// EntityID is a compound Entity ID that is globally
+// unique due to a prefixed type.
+//   Formed by type_id + ":" + entity_id
+type EntityID string
+
+// Type returns the Type ID embedded in the EntityID.
+func (x EntityID) Type() string {
+	s := string(x)
+	idx := strings.IndexByte(s, ':')
+	if idx == -1 {
+		return ""
+	}
+	return s[:idx]
+}
+
+// ID returns the type-specific Entity ID embedded in the EntityID.
+func (x EntityID) ID() string {
+	s := string(x)
+	return s[strings.IndexByte(s, ':')+1:]
+}
+
 // Entity is a record in the data source.
 type Entity struct {
 	// ID is a unique identifier for the entity.
-	ID string `json:"id"`
+	ID EntityID `json:"id"`
 
 	// Name is a human-readable description of the entity.
 	Name string `json:"name"`
@@ -69,7 +90,7 @@ func (p PropertyValue) String() string {
 	case string:
 		return x
 	case Entity:
-		return x.ID
+		return string(x.ID)
 	default:
 		// bool, int64, float64
 		return fmt.Sprint(p.v)
@@ -119,7 +140,7 @@ func (p PropertyValue) Int64() int64 {
 			return n
 		}
 	case Entity:
-		n, err := strconv.ParseInt(s.ID, 10, 64)
+		n, err := strconv.ParseInt(s.ID.ID(), 10, 64)
 		if err == nil {
 			return n
 		}
@@ -149,7 +170,7 @@ func (p PropertyValue) Float64() float64 {
 			return n
 		}
 	case Entity:
-		n, err := strconv.ParseFloat(s.ID, 64)
+		n, err := strconv.ParseFloat(s.ID.ID(), 64)
 		if err == nil {
 			return n
 		}

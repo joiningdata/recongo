@@ -341,8 +341,8 @@ func outputToSqlite(filename string, typeSet []map[string]string, cfgset *inputC
 		tx.Rollback()
 		return err
 	}
-	stmt2, err := tx.Prepare(`INSERT INTO recongo_entity_properties (ent_id, prop_id, prop_value)
-		VALUES (?,?,?);`)
+	stmt2, err := tx.Prepare(`INSERT INTO recongo_entity_properties (ent_types, ent_id, prop_id, prop_value)
+		VALUES (?,?,?,?);`)
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -366,7 +366,7 @@ func outputToSqlite(filename string, typeSet []map[string]string, cfgset *inputC
 			}
 			if len(x) > 0 {
 				for propID, propVal := range x {
-					_, err = stmt2.Exec(rec[0], propID, propVal)
+					_, err = stmt2.Exec(rec[2], rec[0], propID, propVal)
 					if err != nil {
 						stmt.Close()
 						stmt2.Close()
@@ -422,17 +422,19 @@ var schema = []string{
 	);`,
 
 	`CREATE TABLE recongo_entities (
-		ent_id varchar primary key,
+		ent_types varchar, -- comma-separated list of type_ids
+		ent_id varchar,
 		ent_name varchar,
 		ent_description varchar,
-		ent_types varchar -- comma-separated list of type_ids
+		primary key(ent_id, ent_types)
 	);`,
 
 	`CREATE TABLE recongo_entity_properties (
+		ent_types varchar,
 		ent_id varchar,
 		prop_id varchar,
 		prop_value varchar,
-		primary key (ent_id,prop_id,prop_value)
+		primary key (ent_types,ent_id,prop_id,prop_value)
 	)`,
 
 	`CREATE VIRTUAL TABLE recongo_entities_fts USING fts5

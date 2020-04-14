@@ -43,6 +43,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		log.Println("Listening at " + *publicURL + *prefix)
+		log.Println("  Load " + *publicURL + "/quit to force a clean shutdown")
 		err = http.ListenAndServe(*addr, service)
 		if err != nil {
 			log.Fatal(err)

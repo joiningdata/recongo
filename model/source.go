@@ -21,7 +21,7 @@ type Source interface {
 	Properties(typeID string) []*Property
 
 	// GetEntity returns the Entity matching the provided ID.
-	GetEntity(entityID string) (*Entity, bool)
+	GetEntity(entityID EntityID) (*Entity, bool)
 
 	// Query entitities for a match.
 	Query(q *QueryRequest) (*QueryResponse, error)
@@ -57,7 +57,7 @@ type QueryProperty struct {
 	ID string `json:"pid"`
 
 	// Value is the text to search for in the Property.
-	Value string `json:"v"`
+	Value interface{} `json:"v"`
 }
 
 // QueryResponse describes a Reconciliation Query reponse.
@@ -72,7 +72,7 @@ type QueryResponse struct {
 // Candidate describes a Reconciliation Query candidate entity.
 type Candidate struct {
 	// ID of the candidate entity.
-	ID string `json:"id"`
+	ID EntityID `json:"id"`
 
 	// Name of the candidate entity.
 	Name string `json:"name"`

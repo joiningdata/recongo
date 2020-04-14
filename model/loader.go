@@ -38,10 +38,9 @@ func Load(filename string) (Source, error) {
 	}
 	defer f.Close()
 	src := &MemorySource{
-		entities:       make(map[string]*Entity),
-		entitiesByType: make(map[string][]string),
-		types:          make(map[string]*Type),
-		properties:     make(map[string][]*Property),
+		entities:   make(map[string][]*Entity),
+		types:      make(map[string]*Type),
+		properties: make(map[string][]*Property),
 	}
 	defaultType := ""
 	var s *bufio.Scanner
@@ -125,10 +124,13 @@ func Load(filename string) (Source, error) {
 		}
 
 		e := &Entity{
-			ID:   row[0],
+			ID:   EntityID(row[0]),
 			Name: row[1],
 		}
-		for _, tid := range typeIDs {
+		for i, tid := range typeIDs {
+			if i == 0 {
+				e.ID = EntityID(tid + ":" + row[0])
+			}
 			e.Types = append(e.Types, src.types[tid])
 		}
 
@@ -138,10 +140,7 @@ func Load(filename string) (Source, error) {
 			}
 			e.Properties = props
 		}
-		src.entities[e.ID] = e
-		for _, t := range e.Types {
-			src.entitiesByType[t.ID] = append(src.entitiesByType[t.ID], e.ID)
-		}
+		src.entities[row[0]] = append(src.entities[row[0]], e)
 	}
 
 	log.Printf("loaded %d entities from '%s'. ", len(src.entities), filename)

@@ -13,11 +13,8 @@ type MemorySource struct {
 	schemaNamespace     string
 	viewURL             string
 
-	// maps from Entity ID to Entity for all known entities.
-	entities map[string]*Entity
-
-	// maps from Entity Type ID to Entity ID list all known entities.
-	entitiesByType map[string][]string
+	// maps from raw Entity ID to Entity for all known entities.
+	entities map[string][]*Entity
 
 	// maps from Entity Type ID to Type for all supported types.
 	types map[string]*Type
@@ -63,9 +60,17 @@ func (s *MemorySource) Properties(typeID string) []*Property {
 }
 
 // GetEntity returns the Entity matching the provided ID.
-func (s *MemorySource) GetEntity(entityID string) (*Entity, bool) {
-	e, ok := s.entities[entityID]
-	return e, ok
+func (s *MemorySource) GetEntity(entityID EntityID) (*Entity, bool) {
+	ents, ok := s.entities[entityID.ID()]
+	if len(ents) == 0 || !ok {
+		return nil, false
+	}
+	for _, e := range ents {
+		if e.ID == entityID {
+			return e, true
+		}
+	}
+	return nil, false
 }
 
 // Query entitities for a match.
@@ -76,51 +81,55 @@ func (s *MemorySource) Query(q *QueryRequest) (*QueryResponse, error) {
 	log.Println(q)
 
 	// fast-track exact ID matches
-	if e, ok := s.entities[q.Text]; ok {
-		log.Println("one-shot:", e)
+	if ents, ok := s.entities[q.Text]; ok {
+		log.Println("one-shot:", ents)
 
-		res.Results = append(res.Results, &Candidate{
-			ID:    e.ID,
-			Name:  e.Name,
-			Types: e.Types,
-			Score: 100.0,
-			Match: true,
-		})
+		for _, e := range ents {
+			res.Results = append(res.Results, &Candidate{
+				ID:    e.ID,
+				Name:  e.Name,
+				Types: e.Types,
+				Score: 100.0,
+				Match: true,
+			})
+		}
 		return res, nil
 	}
 
 	low := strings.ToLower(q.Text)
 
-	for _, e := range s.entities {
-		score := 0.0
-		if strings.ToLower(e.ID) == low {
-			score = 95.0
-		} else if strings.Contains(strings.ToLower(e.Name), low) {
-			// essentially recall since there's no mismatch to low
-			score = float64(len(low)*100) / float64(len(e.Name))
-		}
-		if e.ID == "4336" {
-			log.Println(e.ID, e.Name, low, score)
-		}
-		if q.Type != "" {
-			for _, et := range e.Types {
-				if et.ID == q.Type {
-					score += 10.0
-					break
+	for _, ents := range s.entities {
+		for _, e := range ents {
+			score := 0.0
+			if strings.ToLower(e.ID.ID()) == low {
+				score = 95.0
+			} else if strings.Contains(strings.ToLower(e.Name), low) {
+				// essentially recall since there's no mismatch to low
+				score = float64(len(low)*100) / float64(len(e.Name))
+			}
+			if e.ID == "4336" {
+				log.Println(e.ID, e.Name, low, score)
+			}
+			if q.Type != "" {
+				for _, et := range e.Types {
+					if et.ID == q.Type {
+						score += 10.0
+						break
+					}
 				}
 			}
-		}
 
-		// TODO: score properties also
+			// TODO: score properties also
 
-		if score > 0.0 {
-			res.Results = append(res.Results, &Candidate{
-				ID:    e.ID,
-				Name:  e.Name,
-				Types: e.Types,
-				Score: score,
-				Match: score > 80.0,
-			})
+			if score > 0.0 {
+				res.Results = append(res.Results, &Candidate{
+					ID:    e.ID,
+					Name:  e.Name,
+					Types: e.Types,
+					Score: score,
+					Match: score > 80.0,
+				})
+			}
 		}
 	}
 
@@ -142,17 +151,19 @@ func (s *MemorySource) QueryPrefix(text string, limit int) []*Entity {
 	// fast-track exact ID matches
 	if e, ok := s.entities[text]; ok {
 		log.Println("prefix one-shot:", e)
-		return []*Entity{e}
+		return e
 	}
 
 	var result []*Entity
 	low := strings.ToLower(text)
-	for _, e := range s.entities {
-		if strings.HasPrefix(strings.ToLower(e.Name), low) {
-			result = append(result, e)
+	for _, ents := range s.entities {
+		for _, e := range ents {
+			if strings.HasPrefix(strings.ToLower(e.Name), low) {
+				result = append(result, e)
 
-			if len(result) >= limit {
-				break
+				if len(result) >= limit {
+					break
+				}
 			}
 		}
 	}
